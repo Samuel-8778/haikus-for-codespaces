@@ -1,0 +1,111 @@
+from flask import Flask, jsonify, request, make_response
+from flask_sqlalchemy import SQLAlchemy
+import pymysql
+import uuid
+from werkzeug.security import generate_password_hash, check_password_hash
+from datetime import timedelta, datetime, time
+import jwt
+from functools import wraps
+
+
+pymysql.install_as_MySQLdb()
+app = Flask(__name__)
+app.config['SQLALCHEMY_DATABASE_URI'] = "mysql://root:sam8778@localhost/userdb"
+secret_key = "JD9DU29kw003299e9039jd90wdkE"
+
+
+db = SQLAlchemy(app)
+
+class User(db.Model):
+    __tablename__ = 'user1'
+    id = db.Column(db.Integer, primary_key=True)
+    public_id = db.Column(db.String(50), unique=True)
+    name = db.Column(db.String(100))
+    email = db.Column(db.String(100), unique=True)
+    password = db.Column(db.String(128))
+
+def token_required(f):
+    @wraps(f)
+    def decorated(*args, **kwargs):
+        token = None
+        if 'x-access-token' in request.headers:
+            token = request.headers['x-access-token']
+        if not token:
+            return jsonify({'message': 'token missing'})
+        try:
+            data = jwt.decode(token, secret_key, algorithms=["HS256"])
+
+            current_user = User.query.filter_by(public_id=data['public_id']).all()
+
+        except:
+
+            return make_response({'message-1': 'Token Invalid'})
+
+        return f(current_user, *args, **kwargs)
+    return decorated
+@app.route('/user',methods=['GET'])
+@token_required
+def all_user(current_user):
+    users = User.query.all()
+
+    output = []
+    for user in users:
+        output.append({
+            'public_id': user.public_id,
+            'name': user.name,
+            'email': user.email
+                    })
+        return jsonify({'output': output})
+
+
+
+@app.route("/login", methods=['POST'])
+def login():
+    data = request.json
+    if not data or not data['email'] or not data['password']:
+        return make_response(
+            'Could not verify',
+            401,
+            {'WWW-Authenticate': 'Basic realm ="Login required !!"'}
+        )
+    user = User.query.filter_by(email=data['email']).first()
+    if not user:
+        return make_response(
+            'Could not verify',
+            401,
+            {'WWW-Authenticate': 'Basic realm ="User Does NOt exist!!"'}
+        )
+    if check_password_hash(user.password, data['password']):
+        token = jwt.encode({
+            'public_id': user.public_id, 'exp': datetime.utcnow()+timedelta(seconds=60)}, secret_key)
+
+        return make_response(jsonify({'Token': token}))
+    return make_response(
+        'could not verify', 401,
+        {'WWW-Authenticate': 'Basic realm ="User Does Not exist!!"'}
+    )
+
+
+@app.route('/signup', methods=['POST'])
+def signup():
+    data = request.json
+    name = data['name']
+    email = data['email']
+    password = data['password']
+
+    user = User.query.filter_by(email=email).first()
+    if not user:
+        user = User(
+            public_id=str(uuid.uuid4()),
+            name=name,
+            email=email,
+            password=generate_password_hash(password)
+        )
+        db.session.add(user)
+        db.session.commit()
+        return make_response('successfully signin')
+    else:
+        return make_response('Already signup, go for login')
+if __name__ == "__main__":
+
+    app.run(debug=True)
